@@ -1,0 +1,102 @@
+RETROUVER CE QUE J’AI PERDU — VERSION AVEC EMAIL + NOTIFICATIONS PUSH
+===================================================================
+
+CE QUE CONTIENT CE DOSSIER
+- public/index.html : interface française responsive, annonces, retours utilisateurs, activation des notifications téléphone et choix des alertes e-mail.
+- src/worker.js : API Cloudflare Workers, annonces, photos, modération, détection de correspondances et file de notifications avec reprises automatiques.
+- migrations/0001_initial.sql : tables initiales.
+- migrations/0002_notifications.sql : préférences privées de notification, file d’envoi et prévention des alertes de correspondance en double.
+- public/config.js : App ID public OneSignal et clé de site Turnstile à configurer.
+- public/OneSignalSDKWorker.js : service worker OneSignal.
+- wrangler.jsonc : configuration Cloudflare, D1, R2 et tâche de reprise de la file toutes les 5 minutes.
+- tests/worker.test.mjs : tests automatisés locaux.
+
+IMPORTANT — CE QUI N’EST PAS ENCORE FAIT
+Le dossier contient le code prêt à configurer, mais il n’est pas publié sur un compte Cloudflare. Les ressources distantes, les identifiants de fournisseurs, la vérification du domaine d’envoi, les tests sur de vrais téléphones et les sauvegardes indépendantes doivent encore être configurés dans les comptes du propriétaire. Ne présentez pas le site comme opérationnel avant ces étapes.
+
+PRÉREQUIS
+- Compte Cloudflare appartenant au propriétaire du site.
+- Ordinateur recommandé pour la configuration initiale (Node.js installé).
+- Compte OneSignal pour les notifications push du navigateur.
+- Compte Resend et domaine d’envoi vérifié pour les e-mails transactionnels.
+- Un nom de domaine est recommandé pour l’e-mail et la confiance des visiteurs.
+
+ÉTAPE 1 — PRÉPARER LE PROJET
+1. Décompressez le dossier sur un ordinateur.
+2. Ouvrez un terminal dans le dossier du projet.
+3. Exécutez : npm install
+4. Connectez-vous à Cloudflare : npx wrangler login
+5. Créez D1 : npx wrangler d1 create retrouver-perdus
+6. Copiez le database_id retourné dans wrangler.jsonc à la place de REMPLACER_PAR_ID_D1.
+7. Créez R2 : npx wrangler r2 bucket create retrouver-photos
+8. Appliquez les migrations dans l’ordre : npm run migrate:remote
+   (Cette commande applique les migrations 0001 et 0002 à la base distante. Vérifiez que vous ciblez la bonne base.)
+9. Configurez le secret administrateur : npx wrangler secret put ADMIN_TOKEN
+   Choisissez un jeton long et aléatoire. Ne le mettez jamais dans index.html ou config.js.
+10. Dans les variables du Worker, définissez PUBLIC_BASE_URL avec l’URL HTTPS réelle après avoir choisi l’adresse du site. Cette valeur n’est pas un secret.
+
+ÉTAPE 2 — CONFIGURER LES NOTIFICATIONS PUSH SUR TÉLÉPHONE
+1. Créez une application Web dans OneSignal et configurez le site HTTPS.
+2. Dans les paramètres OneSignal, récupérez l’App ID public et remplacez REMPLACER_PAR_ONESIGNAL_APP_ID dans public/config.js.
+3. Dans Cloudflare, ajoutez le secret : npx wrangler secret put ONESIGNAL_REST_API_KEY
+   Collez la clé API REST privée OneSignal. Ne la mettez jamais dans le navigateur.
+4. Déployez le site en HTTPS et ouvrez-le avec un navigateur compatible.
+5. Sur Android, utilisez Chrome ou un navigateur compatible, puis appuyez sur « Activer les notifications sur ce téléphone » et acceptez la demande du navigateur.
+6. Pour iPhone/iPad, le Web Push dépend de la version d’iOS/iPadOS et l’utilisateur doit généralement ajouter le site à l’écran d’accueil avant d’activer les notifications Web.
+7. Si vous voulez recevoir les alertes administrateur sur votre propre téléphone, activez d’abord les notifications sur ce téléphone, récupérez son Subscription ID dans OneSignal et configurez la variable Worker ADMIN_ONESIGNAL_SUBSCRIPTION_ID avec cette valeur.
+8. Faites un test sur un téléphone réel avant l’ouverture publique.
+
+L’App ID OneSignal est public; la clé API REST est privée. Ne partagez jamais cette clé.
+
+ÉTAPE 3 — CONFIGURER TURNSTILE (ANTI-ROBOTS)
+1. Créez un widget Turnstile pour le domaine de production dans Cloudflare.
+2. Remplacez REMPLACER_PAR_TURNSTILE_SITE_KEY dans public/config.js par la clé publique du widget.
+3. Ajoutez la clé secrète au Worker : npx wrangler secret put TURNSTILE_SECRET_KEY
+4. Testez l’envoi du formulaire de signalement et du formulaire de retour. Les deux doivent réussir après validation du widget.
+5. Ajoutez également une règle de limitation de débit dans le tableau de bord Cloudflare pour limiter les abus. Turnstile ne remplace pas les limites de fréquence.
+
+ÉTAPE 4 — CONFIGURER LES E-MAILS
+1. Créez un compte Resend et ajoutez un domaine que vous contrôlez.
+2. Publiez les enregistrements DNS demandés par Resend et attendez la vérification du domaine.
+3. Créez une clé API Resend et ajoutez-la au Worker : npx wrangler secret put RESEND_API_KEY
+4. Configurez FROM_EMAIL avec une adresse autorisée sur le domaine vérifié (ex. « Retrouver <notifications@votredomaine.mr> »). Utilisez une variable d’environnement Worker, pas un secret dans le code.
+5. Configurez l’adresse de réception des retours administrateur : npx wrangler secret put ADMIN_NOTIFY_EMAIL
+6. Faites des essais de réception et consultez les journaux Resend.
+
+Les e-mails de notification ne pourront être envoyés que lorsque la clé, le domaine et l’adresse d’expéditeur sont correctement configurés. La file d’envoi conserve les messages en attente si le fournisseur n’est pas encore configuré; les échecs temporaires sont retentés et les échecs persistants sont marqués après plusieurs tentatives.
+
+ÉTAPE 5 — CONFIGURER LES VARIABLES ET DÉPLOYER
+Dans le tableau de bord Cloudflare, ajoutez les variables non secrètes :
+- FROM_EMAIL : adresse d’expéditeur vérifiée.
+- PUBLIC_BASE_URL : URL HTTPS publique du site.
+Les clés secrètes doivent être définies avec `wrangler secret put`. Les variables non secrètes se configurent dans le tableau de bord Cloudflare ou dans `wrangler.jsonc`.
+
+Puis :
+- npm test
+- npm run dev (test local; les notifications réelles exigent les services configurés)
+- npm run deploy
+
+ÉTAPE 6 — TESTS AVANT OUVERTURE
+- Vérifier /api/health : base disponible, e-mail et push configurés.
+- Publier une annonce test, vérifier la confirmation et la modération.
+- Approuver deux annonces de catégories/types opposés qui peuvent correspondre.
+- Vérifier que les alertes sont envoyées uniquement aux utilisateurs qui ont donné leur consentement.
+- Tester un e-mail et une notification push depuis un vrai téléphone.
+- Vérifier que les coordonnées privées n’apparaissent jamais dans les annonces publiques.
+- Tester l’espace administrateur avec le jeton secret.
+- Configurer une sauvegarde indépendante et effectuer un test de restauration.
+- Configurer Turnstile ou une protection anti-abus équivalente et des limites de fréquence avant une ouverture à grande échelle.
+
+NOTIFICATIONS
+- Les annonces sont modérées avant d’être publiques.
+- À la publication, le Worker compare l’annonce avec les annonces publiées opposées de même catégorie et crée une alerte si le score dépasse le seuil prévu.
+- Les correspondances sont des suggestions, pas une certitude.
+- Les e-mails et push sont envoyés uniquement si l’utilisateur a explicitement demandé le canal correspondant et fourni un destinataire/abonnement valide.
+- La file de notifications réessaie les échecs temporaires toutes les 5 minutes environ; les jobs persistants sont marqués en échec après plusieurs tentatives. Consultez les journaux pour les diagnostiquer.
+- Le navigateur doit être compatible, le site doit être en HTTPS et l’utilisateur doit autoriser les notifications push.
+
+SAUVEGARDES ET SÉCURITÉ
+D1 fournit des mécanismes de sauvegarde/restauration, mais cela ne remplace pas une copie indépendante. Le dossier inclut un modèle GitHub Actions dans .github/workflows/backup-d1.yml pour exporter la base quotidiennement et conserver un artefact 30 jours. Pour l’activer, publiez le dépôt dans GitHub et ajoutez les secrets CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID. Testez la restauration. Une copie séparée d’un compte Cloudflare reste recommandée. N’enregistrez jamais les secrets dans Git. Limitez les droits d’accès aux comptes de fournisseurs. Les offres gratuites ont des quotas et ne garantissent pas une disponibilité absolue.
+
+PERSONNES DISPARUES
+La plateforme ne remplace pas les autorités ou les services d’urgence. Les annonces de personnes disparues doivent faire l’objet d’une modération prudente; ne publiez pas d’adresse précise, de données d’identité complètes ou d’informations susceptibles de mettre quelqu’un en danger.
